@@ -75,6 +75,7 @@ test(
                 `${address}.1`,
             ]);
         }
+        await execute('ip', ['addr', 'add', '172.31.254.3/24', 'dev', 'ovc-host']);
         const payload = Buffer.alloc(1_048_576, 0x61);
         await writeFile(join(root, 'payload'), payload);
         http = spawn(
@@ -110,7 +111,7 @@ test(
                 const endpoint = {
                     uuid: randomUUID(),
                     name: 'Integration endpoint',
-                    address: '172.31.254.1',
+                    address: '172.31.254.3',
                     port: 23450 + index,
                     protocol,
                     controlChannel,

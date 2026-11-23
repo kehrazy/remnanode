@@ -661,7 +661,9 @@ export class OpenVpnManager {
             'management-hold',
             'disable-dco',
             'verb 3',
-            ...(endpoint.protocol === 'udp' ? ['explicit-exit-notify 1', 'mssfix 1360'] : []),
+            ...(endpoint.protocol === 'udp'
+                ? ['explicit-exit-notify 1', 'mssfix 1360', 'multihome']
+                : []),
             '',
         ].join('\n');
         await this.write(join(directory, 'server.conf'), configuration);
