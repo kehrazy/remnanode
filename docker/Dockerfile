@@ -82,7 +82,7 @@ ARG S6_OVERLAY_VERSION=3.2.3.2
 LABEL org.opencontainers.image.title="Remnawave Node"
 LABEL org.opencontainers.image.description="Remnawave Node with built-in XRay Core"
 LABEL org.opencontainers.image.url="https://github.com/remnawave/node"
-LABEL org.opencontainers.image.source="https://github.com/remnawave/node"
+LABEL org.opencontainers.image.source="https://github.com/kehrazy/remnanode"
 LABEL org.opencontainers.image.vendor="Remnawave"
 LABEL org.opencontainers.image.licenses="AGPL-3.0"
 LABEL org.opencontainers.image.documentation="https://docs.rw"
@@ -101,7 +101,7 @@ COPY docker/rootfs/ /
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates wget xz-utils \
+        ca-certificates wget xz-utils openvpn openssl iptables \
     && S6_ARCH="$(uname -m)" \
     && wget -qO /tmp/s6-noarch.tar.xz "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" \
     && wget -qO /tmp/s6-arch.tar.xz "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" \
