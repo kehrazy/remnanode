@@ -75,7 +75,9 @@ export const AmneziaWgEndpointSchema = ManagedVpnEndpointSchema.extend({
     generation: z.enum(['3.1', '2.0']).default('3.1'),
     preset: z.enum(['default', 'mobile']).default('default'),
     parameters: ParameterFieldsSchema.partial().default({}),
-});
+}).refine((endpoint) => endpoint.generation !== '2.0' ||
+    !['HeaderProtectionKey', 'ContentPaddingAddition', 'RandomTrailers', 'DisableCookies'].some((key) => key in endpoint.parameters),
+    'AmneziaWG 3.1 parameters require generation 3.1');
 
 export const AmneziaWgDeviceIdSchema = z.union([z.literal('default'), z.uuid()]);
 export const AmneziaWgUserSchema = ManagedVpnUserSchema.extend({

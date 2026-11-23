@@ -15,6 +15,7 @@ test('obfuscation validation rejects padding and packet shapes known to fail in 
         uuid: randomUUID(), name: 'Test', address: '192.0.2.1', port: 5443,
         network: '10.95.0.0/24', dnsServers: ['1.1.1.1'],
     });
+    assert.equal(AmneziaWgEndpointSchema.safeParse({ ...endpoint, generation: '2.0', parameters: { RandomTrailers: false } }).success, false);
     const parameters = createAwgParameters(endpoint);
     assert.equal(AmneziaWgParametersSchema.safeParse({ ...parameters, S3: 0 }).success, false);
     assert.equal(AmneziaWgParametersSchema.safeParse({ ...parameters, H2: parameters.H1 }).success, false);
