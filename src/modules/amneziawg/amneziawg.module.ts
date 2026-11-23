@@ -4,6 +4,7 @@ import { AmneziaWgController } from './amneziawg.controller';
 import { AmneziaWgManager } from './amneziawg.manager';
 
 @Module({
+    exports: [AmneziaWgManager],
     controllers: [AmneziaWgController],
     providers: [
         {

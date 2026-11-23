@@ -109,6 +109,7 @@ COPY --from=build /opt/app/dist ./dist
 COPY --from=openvpn-build /usr/local/sbin/openvpn /usr/local/sbin/openvpn
 COPY --from=amneziawg-output /usr/local/bin/amneziawg-go /usr/local/bin/amneziawg-go
 COPY --from=amneziawg-output /usr/local/bin/awg /usr/local/bin/awg
+COPY --from=amneziawg-output /usr/local/bin/build-info.json /usr/local/share/remnanode/amneziawg-build.json
 
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geoip.dat

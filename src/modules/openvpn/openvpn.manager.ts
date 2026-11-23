@@ -7,9 +7,9 @@ import { promisify } from 'node:util';
 
 import { Logger } from '@nestjs/common';
 
-import { startVpnRelay } from '@common/vpn/relay';
-import { writePrivateFile } from '@common/vpn/private-file';
 import { setVpnFirewall } from '@common/vpn/firewall';
+import { writePrivateFile } from '@common/vpn/private-file';
+import { startVpnRelay } from '@common/vpn/relay';
 
 import { OpenVpnManagement } from './openvpn.management';
 import {
@@ -24,8 +24,9 @@ import {
 
 const execute = promisify(execFile);
 
-
 export class OpenVpnManager {
+    private readonly startedAt = new Map<string, number>();
+    private version: string | null = null;
     private readonly logger = new Logger(OpenVpnManager.name);
     private readonly root: string;
     private readonly binary: string;
@@ -67,6 +68,14 @@ export class OpenVpnManager {
 
     async onModuleInit(): Promise<void> {
         if (!this.enabled) return;
+        try {
+            this.version = (await execute(this.binary, ['--version'])).stdout
+                .split(/\s+/)
+                .slice(0, 2)
+                .join(' ');
+        } catch {
+            this.version = null;
+        }
         await mkdir(this.root, { recursive: true, mode: 0o700 });
         await chmod(this.root, 0o700);
         try {
@@ -171,7 +180,8 @@ export class OpenVpnManager {
             if (
                 previous &&
                 (previous.mode !== endpoint.mode ||
-                    previous.controlChannel !== endpoint.controlChannel)
+                    (endpoint.mode === 'server' &&
+                        previous.controlChannel !== endpoint.controlChannel))
             ) {
                 throw new Error('Create a new endpoint to change its mode or control-channel keys');
             }
@@ -181,6 +191,30 @@ export class OpenVpnManager {
                 (endpoint.isDisabled || this.isRunning(endpoint))
             )
                 return;
+            if (
+                previous?.mode === 'relay' &&
+                endpoint.mode === 'relay' &&
+                ['port', 'targetAddress', 'targetPort', 'isDisabled', 'protocol'].every(
+                    (key) =>
+                        previous[key as keyof typeof previous] ===
+                        endpoint[key as keyof typeof endpoint],
+                ) &&
+                (endpoint.isDisabled || this.isRunning(endpoint))
+            ) {
+                this.state.endpoints[endpoint.uuid] = endpoint;
+                await this.save();
+                return;
+            }
+            if (
+                previous &&
+                JSON.stringify({ ...previous, name: undefined, address: undefined }) ===
+                    JSON.stringify({ ...endpoint, name: undefined, address: undefined }) &&
+                (endpoint.isDisabled || this.isRunning(endpoint))
+            ) {
+                this.state.endpoints[endpoint.uuid] = endpoint;
+                await this.save();
+                return;
+            }
             if (previous) await this.stop(previous);
             try {
                 if (!endpoint.isDisabled) await this.start(endpoint);
@@ -444,21 +478,28 @@ export class OpenVpnManager {
 
     private async firewall(endpoint: OpenVpnEndpoint, enable: boolean): Promise<void> {
         if (!this.manageFirewall || endpoint.mode !== 'server') return;
-        await setVpnFirewall({
-            chain: `RWOVP${endpoint.uuid.replaceAll('-', '').slice(0, 10)}`,
-            network: endpoint.network,
-            egressAddress: endpoint.egressAddress,
-        }, enable);
+        await setVpnFirewall(
+            {
+                chain: `RWOVP${endpoint.uuid.replaceAll('-', '').slice(0, 10)}`,
+                network: endpoint.network,
+                egressAddress: endpoint.egressAddress,
+            },
+            enable,
+        );
     }
 
     private async start(endpoint: OpenVpnEndpoint): Promise<void> {
         this.errors.delete(endpoint.uuid);
         if (endpoint.mode === 'relay') {
-            this.relays.set(endpoint.uuid, await startVpnRelay({
-                ...endpoint,
-                listenAddress: this.listenAddress,
-                onError: (error) => this.errors.set(endpoint.uuid, this.errorMessage(error)),
-            }));
+            this.relays.set(
+                endpoint.uuid,
+                await startVpnRelay({
+                    ...endpoint,
+                    listenAddress: this.listenAddress,
+                    onError: (error) => this.errors.set(endpoint.uuid, this.errorMessage(error)),
+                }),
+            );
+            this.startedAt.set(endpoint.uuid, Date.now());
             return;
         }
         const directory = await this.preparePki(endpoint);
@@ -520,6 +561,7 @@ export class OpenVpnManager {
         child.on('exit', (code) => {
             if (this.processes.get(endpoint.uuid) !== child) return;
             this.processes.delete(endpoint.uuid);
+            this.startedAt.delete(endpoint.uuid);
             this.relays.get(endpoint.uuid)?.();
             this.relays.delete(endpoint.uuid);
             this.sockets.get(endpoint.uuid)?.destroy();
@@ -567,6 +609,7 @@ export class OpenVpnManager {
         await new Promise((resolve) => setTimeout(resolve, 300));
         if (child.exitCode !== null || this.errors.has(endpoint.uuid))
             throw new Error('OpenVPN failed to start');
+        this.startedAt.set(endpoint.uuid, Date.now());
     }
 
     private async stop(endpoint: OpenVpnEndpoint): Promise<void> {
@@ -611,17 +654,59 @@ export class OpenVpnManager {
         });
     }
 
+    async restart(): Promise<void> {
+        await this.exclusive(async () => {
+            let failed = false;
+            for (const endpoint of Object.values(this.state.endpoints)) {
+                await this.stop(endpoint);
+                if (endpoint.isDisabled) continue;
+                try {
+                    await this.start(endpoint);
+                } catch (error) {
+                    failed = true;
+                    await this.stop(endpoint).catch(() => undefined);
+                    this.errors.set(
+                        endpoint.uuid,
+                        error instanceof Error ? error.message : 'Restart failed',
+                    );
+                }
+            }
+            await this.save();
+            if (failed) throw new Error('Some VPN listeners failed to restart');
+        });
+    }
+
     status(): {
         enabled: boolean;
+        version: string | null;
         error: string | null;
-        endpoints: (OpenVpnEndpoint & { running: boolean; error: string | null })[];
+        endpoints: (OpenVpnEndpoint & {
+            running: boolean;
+            error: string | null;
+            uptime: number;
+            peers: number;
+        })[];
     } {
         return {
             enabled: this.enabled,
+            version: this.version,
             error: this.initializationError,
             endpoints: Object.values(this.state.endpoints).map((endpoint) => ({
                 ...endpoint,
                 running: this.isRunning(endpoint),
+                uptime: this.isRunning(endpoint)
+                    ? Math.floor(
+                          (Date.now() - (this.startedAt.get(endpoint.uuid) ?? Date.now())) / 1000,
+                      )
+                    : 0,
+                peers:
+                    endpoint.mode === 'server'
+                        ? Object.values(this.state.users).filter(
+                              (user) =>
+                                  user.endpointUuids.includes(endpoint.uuid) &&
+                                  Date.parse(user.expiresAt) > Date.now(),
+                          ).length
+                        : 0,
                 error: this.errors.get(endpoint.uuid) ?? null,
             })),
         };

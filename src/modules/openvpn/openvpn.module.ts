@@ -4,6 +4,7 @@ import { OpenVpnController } from './openvpn.controller';
 import { OpenVpnManager } from './openvpn.manager';
 
 @Module({
+    exports: [OpenVpnManager],
     controllers: [OpenVpnController],
     providers: [
         {

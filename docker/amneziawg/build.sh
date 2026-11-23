@@ -18,3 +18,4 @@ mkdir "$work/tools"
 tar -xzf "$work/tools.tar.gz" --strip-components=1 -C "$work/tools"
 make -C "$work/tools/src" -j2 WITH_WGQUICK=no WITH_SYSTEMDUNITS=no
 install -m 755 "$work/tools/src/wg" "$output/awg"
+printf '{"version":"3.1.20261116","sourceCommit":"08fe3d33bbb116be09a6183d02609311b8b0c9e8"}\n' > "$output/build-info.json"

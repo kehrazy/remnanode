@@ -75,6 +75,16 @@ for (const protocol of ['udp', 'tcp'] as const) {
                     const response = once(client, 'data');
                     client.write('real tcp traffic');
                     assert.equal((await response)[0].toString(), 'real tcp traffic');
+                    await manager.configure({
+                        ...endpoint,
+                        name: 'Renamed route',
+                        address: '192.0.2.100',
+                        network: '10.89.0.0/24',
+                        dnsServers: ['8.8.8.8'],
+                    });
+                    const afterRename = once(client, 'data');
+                    client.write('same TCP connection');
+                    assert.equal((await afterRename)[0].toString(), 'same TCP connection');
                     client.destroy();
                 } else {
                     const client = dgram.createSocket('udp4');
@@ -94,6 +104,8 @@ for (const protocol of ['udp', 'tcp'] as const) {
                     }
                 }
                 if (attempt === 0) {
+                    await manager.restart();
+                    assert.equal(manager.status().endpoints[0].running, true);
                     await manager.onModuleDestroy();
                     manager = new OpenVpnManager({
                         root,
