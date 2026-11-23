@@ -103,6 +103,11 @@ for (const protocol of ['udp', 'tcp'] as const) {
                 JSON.parse(await readFile(join(root, 'state.json'), 'utf8')).epoch,
                 usage.epoch,
             );
+            const configuring = manager.configure(endpoint);
+            await manager.onModuleDestroy();
+            await configuring;
+            assert.equal(manager.status().endpoints[0].running, false);
+            await assert.rejects(manager.configure(endpoint), /stopping/);
         },
     );
 }

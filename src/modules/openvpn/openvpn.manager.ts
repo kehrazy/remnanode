@@ -110,14 +110,20 @@ export class OpenVpnManager {
         if (!this.enabled || this.initializationError) return;
         this.stopping = true;
         clearInterval(this.timer);
+        await this.serial;
         for (const endpoint of Object.values(this.state.endpoints)) await this.stop(endpoint);
-        await this.exclusive(() => this.save());
+        await this.save();
     }
 
     private exclusive<T>(operation: () => Promise<T>): Promise<T> {
-        if (!this.enabled || this.initializationError)
+        if (!this.enabled || this.initializationError || this.stopping)
             return Promise.reject(
-                new Error(this.initializationError ?? 'OpenVPN is disabled on this node'),
+                new Error(
+                    this.initializationError ??
+                        (this.stopping
+                            ? 'OpenVPN is stopping'
+                            : 'OpenVPN is disabled on this node'),
+                ),
             );
         const result = this.serial.then(operation);
         this.serial = result.then(
