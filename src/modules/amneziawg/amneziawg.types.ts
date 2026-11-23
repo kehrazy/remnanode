@@ -120,7 +120,8 @@ export const AmneziaWgStateSchema = z.object({
     })),
 }).refine((state) =>
     Object.entries(state.endpoints).every(([uuid, endpoint]) => uuid === endpoint.uuid) &&
-    Object.entries(state.users).every(([id, user]) => id === user.id),
+    Object.entries(state.users).every(([id, user]) => id === user.id) &&
+    Object.values(state.endpoints).every((endpoint) => endpoint.mode !== 'server' || Boolean(state.servers[endpoint.uuid])),
 );
 
 export type AmneziaWgEndpoint = z.infer<typeof AmneziaWgEndpointSchema>;

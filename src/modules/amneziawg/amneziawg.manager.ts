@@ -229,6 +229,9 @@ export class AmneziaWgManager {
             if (previous) await this.stop(previous);
             this.state.endpoints[endpoint.uuid] = endpoint;
             try {
+                if (endpoint.mode === 'server') this.state.servers[endpoint.uuid] ??= {
+                    ...createAwgKeyPair(), parameters: createAwgParameters(endpoint), peers: {},
+                };
                 if (!endpoint.isDisabled) await this.start(endpoint);
                 await this.save();
             } catch (error) {
@@ -320,9 +323,8 @@ export class AmneziaWgManager {
             }));
             return;
         }
-        const server = this.state.servers[endpoint.uuid] ??= {
-            ...createAwgKeyPair(), parameters: createAwgParameters(endpoint), peers: {},
-        };
+        const server = this.state.servers[endpoint.uuid];
+        if (!server) throw new Error('AmneziaWG server identity is missing; restore its persistent state');
         for (const peer of Object.values(server.peers)) peer.rx = peer.tx = 0;
         const name = this.interfaceName(endpoint.uuid);
         const child = spawn(this.binary, ['-f', name], {

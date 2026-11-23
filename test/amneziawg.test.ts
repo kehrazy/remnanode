@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -65,4 +65,28 @@ test('initialized AmneziaWG volumes fail closed when state disappears or becomes
     const corrupt = new AmneziaWgManager({ root });
     await corrupt.onModuleInit();
     assert.match(corrupt.status().error!, /unreadable/);
+});
+
+test('disabled servers retain keys and incomplete saved endpoint identities fail closed', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'rwawg-disabled-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const manager = new AmneziaWgManager({ root, manageFirewall: false });
+    await manager.onModuleInit();
+    const endpoint = AmneziaWgEndpointSchema.parse({ uuid: randomUUID(), name: 'Disabled', address: '192.0.2.1', port: 5443, network: '10.95.0.0/24', dnsServers: ['1.1.1.1'], isDisabled: true });
+    await manager.configure(endpoint);
+    await manager.onModuleDestroy();
+    const state = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
+    assert.ok(state.servers[endpoint.uuid].privateKey);
+    const restarted = new AmneziaWgManager({ root, manageFirewall: false });
+    await restarted.onModuleInit();
+    assert.equal(restarted.status().error, null);
+    await restarted.onModuleDestroy();
+    const saved = JSON.parse(await readFile(join(root, 'state.json'), 'utf8'));
+    assert.equal(saved.servers[endpoint.uuid].publicKey, state.servers[endpoint.uuid].publicKey);
+    saved.servers = {};
+    await writeFile(join(root, 'state.json'), JSON.stringify(saved));
+    const incomplete = new AmneziaWgManager({ root, manageFirewall: false });
+    await incomplete.onModuleInit();
+    assert.match(incomplete.status().error!, /unreadable/);
+    await assert.rejects(incomplete.sync({ generation: 1, users: [] }), /unreadable/);
 });
