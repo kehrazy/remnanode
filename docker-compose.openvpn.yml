@@ -1,0 +1,18 @@
+services:
+  remnanode:
+    image: ${REMNANODE_IMAGE:?Set the tested remnanode-openvpn image tag}
+    pull_policy: never
+    environment:
+      NODE_PORT: ${NODE_PORT:-2222}
+      SECRET_KEY: ${SECRET_KEY:?Set the existing node secret}
+      OPENVPN_ENABLED: 'true'
+      OPENVPN_STATE_PATH: /var/lib/remnanode/openvpn
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./openvpn:/var/lib/remnanode/openvpn
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'

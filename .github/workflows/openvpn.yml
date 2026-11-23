@@ -1,0 +1,52 @@
+name: OpenVPN fork
+on:
+  push:
+    branches: [openvpn]
+  workflow_dispatch:
+concurrency:
+  group: openvpn-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: sudo apt-get update && sudo apt-get install -y openvpn iptables iproute2
+      - run: npm run typecheck
+      - run: npx tsx --test test/openvpn.management.test.ts test/openvpn.relay.test.ts
+      - run: sudo env PATH="$PATH" OPENVPN_RUNTIME_TEST=true node_modules/.bin/tsx --test test/openvpn.runtime.test.ts
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          build-args: XRAY_CORE_VERSION=v26.7.28
+          tags: remnanode-openvpn:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/remnanode-openvpn.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Publish image archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gzip -1 /tmp/remnanode-openvpn.tar
+          cd /tmp
+          sha256sum remnanode-openvpn.tar.gz > remnanode-openvpn.tar.gz.sha256
+          gh release create "openvpn-${GITHUB_SHA}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "OpenVPN ${GITHUB_SHA:0:12}" --notes "Tested OpenVPN node image. Xray remains at 26.7.28."
+          gh release upload "openvpn-${GITHUB_SHA}" remnanode-openvpn.tar.gz remnanode-openvpn.tar.gz.sha256 --repo "$GITHUB_REPOSITORY"
