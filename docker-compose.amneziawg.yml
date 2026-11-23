@@ -1,0 +1,11 @@
+services:
+  remnanode:
+    image: ${REMNANODE_IMAGE:?Set the tested remnanode-openvpn image tag}
+    pull_policy: never
+    environment:
+      AMNEZIAWG_ENABLED: 'true'
+      AMNEZIAWG_STATE_PATH: /var/lib/remnanode/amneziawg
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ./amneziawg:/var/lib/remnanode/amneziawg

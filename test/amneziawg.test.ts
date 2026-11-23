@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { AmneziaWgEndpointSchema, AmneziaWgParametersSchema, createAwgParameters, validAwgSignature } from '../src/modules/amneziawg/amneziawg.types';
+import { AmneziaWgManager } from '../src/modules/amneziawg/amneziawg.manager';
 import { amneziaWgRequest, parseAmneziaWgUsage } from '../src/modules/amneziawg/amneziawg.uapi';
 
 test('obfuscation validation rejects padding and packet shapes known to fail in native cores', () => {
@@ -47,4 +48,21 @@ test('UAPI handles fragmented replies, native errno and truncated responses with
     await assert.rejects(amneziaWgRequest(path, 'get=1'), /errno -22/);
     response = 'private_key=not-for-errors\n';
     await assert.rejects(amneziaWgRequest(path, 'get=1'), /was truncated/);
+});
+
+test('initialized AmneziaWG volumes fail closed when state disappears or becomes corrupt', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'rwawg-state-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const original = new AmneziaWgManager({ root });
+    await original.onModuleInit();
+    await original.onModuleDestroy();
+    await rm(join(root, 'state.json'));
+    const missing = new AmneziaWgManager({ root });
+    await missing.onModuleInit();
+    assert.match(missing.status().error!, /missing/);
+    await assert.rejects(missing.sync({ generation: 1, users: [] }), /missing/);
+    await writeFile(join(root, 'state.json'), '{');
+    const corrupt = new AmneziaWgManager({ root });
+    await corrupt.onModuleInit();
+    assert.match(corrupt.status().error!, /unreadable/);
 });

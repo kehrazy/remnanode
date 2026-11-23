@@ -26,6 +26,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
     const root = await mkdtemp(join(tmpdir(), 'rwawg-'));
     const clientNamespace = 'awc' + process.pid;
     const destinationNamespace = 'awd' + process.pid;
+    const secondNamespace = 'aw2' + process.pid;
     const clientInterface = 'awg-client';
     const binary = process.env.AMNEZIAWG_TEST_BINARY!;
     const tools = process.env.AMNEZIAWG_TEST_TOOLS!;
@@ -37,12 +38,14 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
         await manager.onModuleDestroy();
         await execute('ip', ['netns', 'del', clientNamespace]).catch(() => undefined);
         await execute('ip', ['netns', 'del', destinationNamespace]).catch(() => undefined);
+        await execute('ip', ['netns', 'del', secondNamespace]).catch(() => undefined);
         await rm(root, { recursive: true, force: true });
     });
     await execute('sysctl', ['-w', 'net.ipv4.ip_forward=1']);
     for (const [namespace, host, peer, address] of [
         [clientNamespace, 'awc-host', 'awc-peer', '172.31.253'],
         [destinationNamespace, 'awd-host', 'awd-peer', '198.19.0'],
+        [secondNamespace, 'aw2-host', 'aw2-peer', '172.31.254'],
     ]) {
         await execute('ip', ['netns', 'add', namespace]);
         await execute('ip', ['link', 'add', host, 'type', 'veth', 'peer', 'name', peer]);
@@ -83,7 +86,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                 endpointUuids: [endpoint.uuid], devices: [{ uuid: 'default', name: 'Default' }, { uuid: randomUUID(), name: 'Second device' }],
             };
             await manager.sync({ generation: generation++, users: [user] });
-            const direct = await manager.download(endpoint.uuid, user.id);
+            let direct = await manager.download(endpoint.uuid, user.id);
             assert.equal(await manager.download(endpoint.uuid, user.id), direct);
             const second = await manager.download(endpoint.uuid, user.id, { deviceUuid: user.devices[1].uuid });
             assert.notEqual(/^PrivateKey = (.+)$/m.exec(direct)![1], /^PrivateKey = (.+)$/m.exec(second)![1]);
@@ -154,6 +157,84 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                 children.delete(client);
                 client = undefined;
                 console.log(`Native ${version}/${preset}/${viaRelay ? 'relay' : 'direct'}: verified 1 MiB through the managed interface`);
+            }
+            if (version === '3.1' && preset === 'default') {
+                const running = new Map<string, ChildProcess>();
+                async function connect(profile: string, namespace: string) {
+                    const previous = running.get(namespace);
+                    if (previous) {
+                        previous.kill('SIGTERM');
+                        await new Promise<void>((resolve) => previous.once('exit', () => resolve()));
+                        children.delete(previous);
+                    }
+                    const config = join(root, namespace + '.conf');
+                    await writeFile(config, profile.split('\n').filter((line) => !/^(Address|DNS|MTU) =/.test(line)).join('\n'), { mode: 0o600 });
+                    const child = spawn('ip', ['netns', 'exec', namespace, binary, '-f', clientInterface], { env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1', WG_PROCESS_FOREGROUND: '1' }, stdio: 'ignore' });
+                    children.add(child);
+                    running.set(namespace, child);
+                    await eventually(async () => {
+                        try { await execute('ip', ['netns', 'exec', namespace, tools, 'show', clientInterface]); return true; }
+                        catch { return false; }
+                    }, 'Additional native client did not start');
+                    await execute('ip', ['netns', 'exec', namespace, tools, 'setconf', clientInterface, config]);
+                    const [ipv4, ipv6] = /^Address = (.+)$/m.exec(profile)![1].split(', ');
+                    for (const [family, address] of [['-4', ipv4], ['-6', ipv6]])
+                        await execute('ip', ['netns', 'exec', namespace, 'ip', family, 'addr', 'add', address, 'dev', clientInterface]);
+                    await execute('ip', ['netns', 'exec', namespace, 'ip', 'link', 'set', clientInterface, 'mtu', '1280', 'up']);
+                    await execute('ip', ['netns', 'exec', namespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', clientInterface]);
+                    await execute('ip', ['netns', 'exec', namespace, 'ip', '-6', 'route', 'replace', '::/0', 'dev', clientInterface]);
+                }
+                async function transfer(namespace: string, timeout = '15') {
+                    const output = join(root, namespace + '.download');
+                    await execute('ip', ['netns', 'exec', namespace, 'curl', '-fsS', '--max-time', timeout, '--output', output, 'http://198.19.0.2:18081/payload']);
+                    assert.deepEqual(await readFile(output), payload);
+                }
+                await execute('sysctl', ['-w', 'net.ipv6.conf.all.forwarding=1']);
+                await execute('ip', ['-6', 'addr', 'add', '2001:db8:9500::1/64', 'dev', 'awd-host']);
+                await execute('ip', ['netns', 'exec', destinationNamespace, 'ip', '-6', 'addr', 'add', '2001:db8:9500::2/64', 'dev', 'awd-peer']);
+                await execute('ip', ['netns', 'exec', destinationNamespace, 'ip', '-6', 'route', 'add', 'default', 'via', '2001:db8:9500::1']);
+                const ipv6Http = spawn('ip', ['netns', 'exec', destinationNamespace, 'python3', '-m', 'http.server', '18081', '--bind', '2001:db8:9500::2', '--directory', root], { stdio: 'ignore' });
+                children.add(ipv6Http);
+                await eventually(async () => {
+                    try { await execute('curl', ['-gfsSI', '--max-time', '1', 'http://[2001:db8:9500::2]:18081/payload']); return true; }
+                    catch { return false; }
+                }, 'IPv6 destination fixture did not start');
+                await connect(direct, clientNamespace);
+                await connect(second, secondNamespace);
+                await Promise.all([transfer(clientNamespace), transfer(secondNamespace)]);
+                await assert.rejects(execute('ip', ['netns', 'exec', clientNamespace, 'curl', '-gfsS', '--max-time', '2', 'http://[2001:db8:9500::2]:18081/payload']));
+                const ipv6Rules = (await execute('ip6tables-save', ['-c'])).stdout;
+                const drop = ipv6Rules.split('\n').find((line) => line.includes('-A FORWARD -i rwawg' + endpoint.uuid.replaceAll('-', '').slice(0, 8)));
+                assert.ok(drop && Number(/^\[(\d+):/.exec(drop)![1]) > 0, 'IPv6 packets did not reach the owned drop rule');
+                user.credentialId = randomUUID();
+                await manager.sync({ generation: generation++, users: [user] });
+                await assert.rejects(transfer(clientNamespace, '2'));
+                const rotated = await manager.download(endpoint.uuid, user.id);
+                assert.notEqual(/^PrivateKey = (.+)$/m.exec(rotated)![1], /^PrivateKey = (.+)$/m.exec(direct)![1]);
+                direct = rotated;
+                await connect(direct, clientNamespace);
+                await transfer(clientNamespace);
+                await assert.rejects(transfer(secondNamespace, '2'));
+                const removedDevice = user.devices[1].uuid;
+                user.devices = [user.devices[0]];
+                await manager.sync({ generation: generation++, users: [user] });
+                await assert.rejects(manager.download(endpoint.uuid, user.id, { deviceUuid: removedDevice }));
+                user.expiresAt = new Date(Date.now() + 50).toISOString();
+                await manager.sync({ generation: generation++, users: [user] });
+                await eventually(async () => manager.status().endpoints.find((entry) => entry.uuid === endpoint.uuid)!.peers === 0, 'Expired peers remained installed');
+                await assert.rejects(transfer(clientNamespace, '2'));
+                await assert.rejects(manager.download(endpoint.uuid, user.id));
+                user.expiresAt = new Date(Date.now() + 120_000).toISOString();
+                await manager.sync({ generation: generation++, users: [user] });
+                assert.equal(await manager.download(endpoint.uuid, user.id), direct);
+                await connect(direct, clientNamespace);
+                await transfer(clientNamespace);
+                for (const child of running.values()) {
+                    child.kill('SIGTERM');
+                    await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+                    children.delete(child);
+                }
+                console.log('Simultaneous devices, credential rotation and local expiry enforcement passed');
             }
             const usage = await manager.usage();
             assert.ok(usage.users.find((entry) => entry.id === user.id)!.downlink >= before + payload.length * 2);

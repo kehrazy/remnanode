@@ -30,23 +30,35 @@ jobs:
       - run: npx tsx --test test/openvpn.management.test.ts test/openvpn.relay.test.ts test/amneziawg.test.ts
       - run: sudo env PATH="$PATH" OPENVPN_RUNTIME_TEST=true OPENVPN_TEST_BINARY=/tmp/remnawave-openvpn node_modules/.bin/tsx --test test/openvpn.runtime.test.ts
       - run: sudo env PATH="$PATH" AMNEZIAWG_RUNTIME_TEST=true AMNEZIAWG_TEST_BINARY=/tmp/remnawave-amneziawg/amneziawg-go AMNEZIAWG_TEST_TOOLS=/tmp/remnawave-amneziawg/awg node_modules/.bin/tsx --test test/amneziawg.runtime.test.ts
+      - uses: actions/upload-artifact@v7
+        with:
+          name: amneziawg-linux-amd64
+          path: /tmp/remnawave-amneziawg/
+          retention-days: 3
   image:
+    timeout-minutes: 20
     needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: amneziawg-linux-amd64
+          path: .build/amneziawg
       - uses: docker/setup-buildx-action@v4
       - uses: docker/build-push-action@v7
         with:
           context: .
           file: docker/Dockerfile
-          build-args: XRAY_CORE_VERSION=v26.7.28
+          build-args: |
+            XRAY_CORE_VERSION=v26.7.28
+            AMNEZIAWG_SOURCE=amneziawg-prebuilt
           tags: remnanode-openvpn:${{ github.sha }}
           outputs: type=docker,dest=/tmp/remnanode-openvpn.tar
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min,timeout=2m,ignore-error=true
       - name: Publish image archive
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
+ARG AMNEZIAWG_SOURCE=amneziawg-build
+
 FROM node:24.22-trixie-slim AS build
 
 WORKDIR /opt/app
@@ -26,6 +28,11 @@ RUN sh /build/build.sh /usr/local/sbin/openvpn
 FROM golang:1.27.4-trixie AS amneziawg-build
 COPY docker/amneziawg/build.sh /build-amneziawg.sh
 RUN sh /build-amneziawg.sh /usr/local/bin
+
+FROM scratch AS amneziawg-prebuilt
+COPY --chmod=755 .build/amneziawg/ /usr/local/bin/
+
+FROM ${AMNEZIAWG_SOURCE} AS amneziawg-output
 
 FROM alpine:3.21 AS xray
 
@@ -100,8 +107,8 @@ WORKDIR /opt/app
 
 COPY --from=build /opt/app/dist ./dist
 COPY --from=openvpn-build /usr/local/sbin/openvpn /usr/local/sbin/openvpn
-COPY --from=amneziawg-build /usr/local/bin/amneziawg-go /usr/local/bin/amneziawg-go
-COPY --from=amneziawg-build /usr/local/bin/awg /usr/local/bin/awg
+COPY --from=amneziawg-output /usr/local/bin/amneziawg-go /usr/local/bin/amneziawg-go
+COPY --from=amneziawg-output /usr/local/bin/awg /usr/local/bin/awg
 
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geoip.dat

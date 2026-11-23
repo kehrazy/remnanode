@@ -4,7 +4,9 @@ Node for Remnawave Panel.
 
 Learn more about Remnawave Panel [here](https://docs.rw/).
 
-This fork runs panel-managed OpenVPN alongside Xray. Load a tested image archive
+This fork runs panel-managed OpenVPN and AmneziaWG alongside Xray.
+See the [AmneziaWG node guide](docs/amneziawg.md) for its Compose override,
+persistent state and deployment requirements. Load a tested image archive
 from this fork's releases, set `REMNANODE_IMAGE` to its full image tag and provide
 the existing `SECRET_KEY` in your local `.env`. Start it with:
 
