@@ -161,6 +161,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
             if (version === '3.1' && preset === 'default') {
                 const running = new Map<string, ChildProcess>();
                 async function connect(profile: string, namespace: string) {
+                    const name = namespace === secondNamespace ? 'awg-second' : clientInterface;
                     const previous = running.get(namespace);
                     if (previous) {
                         previous.kill('SIGTERM');
@@ -169,20 +170,20 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                     }
                     const config = join(root, namespace + '.conf');
                     await writeFile(config, profile.split('\n').filter((line) => !/^(Address|DNS|MTU) =/.test(line)).join('\n'), { mode: 0o600 });
-                    const child = spawn('ip', ['netns', 'exec', namespace, binary, '-f', clientInterface], { env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1', WG_PROCESS_FOREGROUND: '1' }, stdio: 'ignore' });
+                    const child = spawn('ip', ['netns', 'exec', namespace, binary, '-f', name], { env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1', WG_PROCESS_FOREGROUND: '1' }, stdio: 'ignore' });
                     children.add(child);
                     running.set(namespace, child);
                     await eventually(async () => {
-                        try { await execute('ip', ['netns', 'exec', namespace, tools, 'show', clientInterface]); return true; }
+                        try { await execute('ip', ['netns', 'exec', namespace, tools, 'show', name]); return true; }
                         catch { return false; }
                     }, 'Additional native client did not start');
-                    await execute('ip', ['netns', 'exec', namespace, tools, 'setconf', clientInterface, config]);
+                    await execute('ip', ['netns', 'exec', namespace, tools, 'setconf', name, config]);
                     const [ipv4, ipv6] = /^Address = (.+)$/m.exec(profile)![1].split(', ');
                     for (const [family, address] of [['-4', ipv4], ['-6', ipv6]])
-                        await execute('ip', ['netns', 'exec', namespace, 'ip', family, 'addr', 'add', address, 'dev', clientInterface, ...(family === '-6' ? ['nodad'] : [])]);
-                    await execute('ip', ['netns', 'exec', namespace, 'ip', 'link', 'set', clientInterface, 'mtu', '1280', 'up']);
-                    await execute('ip', ['netns', 'exec', namespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', clientInterface]);
-                    await execute('ip', ['netns', 'exec', namespace, 'ip', '-6', 'route', 'replace', '::/0', 'dev', clientInterface]);
+                        await execute('ip', ['netns', 'exec', namespace, 'ip', family, 'addr', 'add', address, 'dev', name, ...(family === '-6' ? ['nodad'] : [])]);
+                    await execute('ip', ['netns', 'exec', namespace, 'ip', 'link', 'set', name, 'mtu', '1280', 'up']);
+                    await execute('ip', ['netns', 'exec', namespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', name]);
+                    await execute('ip', ['netns', 'exec', namespace, 'ip', '-6', 'route', 'replace', '::/0', 'dev', name]);
                 }
                 async function transfer(namespace: string, timeout = '15') {
                     const output = join(root, namespace + '.download');
