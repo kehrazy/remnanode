@@ -45,3 +45,6 @@ lerna-debug.log*
 
 /build
 *.tar.gz
+
+/openvpn/
+*.ovpn

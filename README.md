@@ -16,6 +16,12 @@ Enable `net.ipv4.ip_forward=1` on the host and allow the public OpenVPN ports yo
 configure in the panel. Persist and back up `./openvpn`: it contains server and
 client private keys, account state and traffic counters. OpenVPN is disabled unless
 `OPENVPN_ENABLED=true`; existing Xray-only deployments retain their behavior.
+`OPENVPN_BIND_ADDRESS` selects the IPv4 address for VPN listeners; the default is
+`0.0.0.0`. It does not change the management API listener. The bundled OpenVPN
+2.6.23 binary includes UDP masking; its pinned source, GPL-2.0-or-later packet
+writer and build script are in `docker/openvpn`. `OPENVPN_BINARY` can override
+the server executable, but UDP masking requires the patched binary.
+
 See the [panel's OpenVPN guide](https://github.com/kehrazy/remnawave/blob/openvpn/docs/openvpn.md)
 for account policy, subscriptions, relays and rollback.
 
