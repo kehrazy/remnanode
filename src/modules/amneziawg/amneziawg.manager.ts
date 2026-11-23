@@ -139,6 +139,11 @@ export class AmneziaWgManager {
         return 'rwawg' + uuid.replaceAll('-', '').slice(0, 8);
     }
 
+    private ipv6Prefix(uuid: string): string {
+        const id = uuid.replaceAll('-', '');
+        return `fd00:${id.slice(0, 4)}:${id.slice(4, 8)}:${id.slice(8, 12)}::`;
+    }
+
     private request(uuid: string, command: string): Promise<string> {
         return amneziaWgRequest(`/var/run/amneziawg/${this.interfaceName(uuid)}.sock`, command);
     }
@@ -202,6 +207,7 @@ export class AmneziaWgManager {
                 `public_key=${Buffer.from(key, 'base64').toString('hex')}`,
                 `preshared_key=${Buffer.from(peer.presharedKey, 'base64').toString('hex')}`,
                 'replace_allowed_ips=true', `allowed_ip=${prefix}.${peer.address}/32`,
+                `allowed_ip=${this.ipv6Prefix(endpoint.uuid)}${peer.address.toString(16)}/128`,
             );
         }
         if (changes.length) await this.request(endpoint.uuid, 'set=1\n' + changes.join('\n'));
@@ -281,7 +287,7 @@ export class AmneziaWgManager {
             const prefix = endpoint.network.split('/')[0].split('.').slice(0, 3).join('.');
             return [
                 '[Interface]', `PrivateKey = ${peer.privateKey}`,
-                `Address = ${prefix}.${peer.address}/32`,
+                `Address = ${prefix}.${peer.address}/32, ${this.ipv6Prefix(uuid)}${peer.address.toString(16)}/128`,
                 `DNS = ${endpoint.dnsServers.join(', ')}`, 'MTU = 1280',
                 ...Object.entries(server.parameters).map(([key, value]) => `${key} = ${typeof value === 'boolean' ? value ? 'on' : 'off' : value}`),
                 '', '[Peer]', `PublicKey = ${server.publicKey}`, `PresharedKey = ${peer.presharedKey}`,
@@ -293,6 +299,12 @@ export class AmneziaWgManager {
 
     private async firewall(endpoint: AmneziaWgEndpoint, enable: boolean): Promise<void> {
         if (!this.manageFirewall || endpoint.mode !== 'server') return;
+        const name = this.interfaceName(endpoint.uuid);
+        for (const [chain, direction] of [['INPUT', '-i'], ['FORWARD', '-i'], ['FORWARD', '-o']]) {
+            const rule = [chain, direction, name, '-m', 'comment', '--comment', 'RWAWG' + endpoint.uuid.replaceAll('-', '').slice(0, 10), '-j', 'DROP'];
+            await execute('ip6tables', ['-w', '-D', ...rule]).catch(() => undefined);
+            if (enable) await execute('ip6tables', ['-w', '-I', ...rule]);
+        }
         await setVpnFirewall({
             chain: 'RWAWG' + endpoint.uuid.replaceAll('-', '').slice(0, 10),
             network: endpoint.network, egressAddress: endpoint.egressAddress,
@@ -335,6 +347,7 @@ export class AmneziaWgManager {
         const routes = JSON.parse((await execute('ip', ['-j', '-4', 'route', 'show', endpoint.network])).stdout) as { dev?: string }[];
         if (routes.some((route) => route.dev !== name)) throw new Error('VPN subnet is already used by another interface');
         await execute('ip', ['address', 'replace', `${address}/24`, 'dev', name]);
+        await execute('ip', ['-6', 'address', 'replace', `${this.ipv6Prefix(endpoint.uuid)}1/64`, 'dev', name]);
         await execute('ip', ['link', 'set', 'dev', name, 'mtu', '1280', 'up']);
         const parameters = Object.entries(server.parameters).filter(([key]) => !/^J|^I[1-5]$/.test(key)).map(([key, value]) => {
             const nativeName = PARAMETER_NAMES[key] ?? key.toLowerCase();

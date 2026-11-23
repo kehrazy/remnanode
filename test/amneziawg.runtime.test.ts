@@ -91,7 +91,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
             const before = (await manager.usage()).users.find((entry) => entry.id === user.id)?.downlink ?? 0;
             for (const viaRelay of [false, true]) {
                 const profile = await manager.download(endpoint.uuid, user.id, viaRelay ? { port: relay.port } : {});
-                const address = /^Address = (.+)$/m.exec(profile)![1];
+                const [address, ipv6] = /^Address = (.+)$/m.exec(profile)![1].split(', ');
                 const native = profile.split('\n').filter((line) => !/^(Address|DNS|MTU) =/.test(line)).join('\n');
                 const config = join(root, 'client.conf');
                 await writeFile(config, native, { mode: 0o600 });
@@ -106,6 +106,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                 }, 'Native client did not start');
                 await execute('ip', ['netns', 'exec', clientNamespace, tools, 'setconf', clientInterface, config]);
                 await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'addr', 'add', address, 'dev', clientInterface]);
+                await execute('ip', ['netns', 'exec', clientNamespace, 'ip', '-6', 'addr', 'add', ipv6, 'dev', clientInterface]);
                 await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'link', 'set', clientInterface, 'mtu', '1280', 'up']);
                 await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', clientInterface]);
                 try {
@@ -120,6 +121,9 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                 assert.deepEqual(await readFile(join(root, 'download')), payload);
                 const route = (await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'route', 'get', '198.19.0.2'])).stdout;
                 assert.match(route, /dev awg-client/);
+                await execute('ip', ['netns', 'exec', clientNamespace, 'ip', '-6', 'route', 'replace', '::/0', 'dev', clientInterface]);
+                assert.match((await execute('ip', ['netns', 'exec', clientNamespace, 'ip', '-6', 'route', 'get', '2001:db8::2'])).stdout, /dev awg-client/);
+                await execute('ip6tables', ['-C', 'FORWARD', '-i', 'rwawg' + endpoint.uuid.replaceAll('-', '').slice(0, 8), '-m', 'comment', '--comment', 'RWAWG' + endpoint.uuid.replaceAll('-', '').slice(0, 10), '-j', 'DROP']);
                 if (viaRelay) {
                     await manager.sync({ generation: generation++, users: [{ ...user, endpointUuids: [] }] });
                     await assert.rejects(manager.download(endpoint.uuid, user.id));
@@ -140,6 +144,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                     }, 'Native client did not restart');
                     await execute('ip', ['netns', 'exec', clientNamespace, tools, 'setconf', clientInterface, config]);
                     await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'addr', 'add', address, 'dev', clientInterface]);
+                await execute('ip', ['netns', 'exec', clientNamespace, 'ip', '-6', 'addr', 'add', ipv6, 'dev', clientInterface]);
                     await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'link', 'set', clientInterface, 'mtu', '1280', 'up']);
                     await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', clientInterface]);
                     await execute('ip', ['netns', 'exec', clientNamespace, 'curl', '-fsS', '--max-time', '15', '--output', join(root, 'download'), 'http://198.19.0.2:18081/payload']);
