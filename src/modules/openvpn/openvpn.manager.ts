@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import dgram from 'node:dgram';
 import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { createConnection, createServer, type Socket } from 'node:net';
@@ -63,7 +63,7 @@ export class OpenVpnManager {
         enabled?: boolean;
     }) {
         this.root = options.root;
-        this.binary = options.binary ?? '/usr/sbin/openvpn';
+        this.binary = options.binary ?? '/usr/local/sbin/openvpn';
         this.manageFirewall = options.manageFirewall ?? true;
         this.enabled = options.enabled ?? true;
     }
@@ -624,21 +624,9 @@ export class OpenVpnManager {
         if (endpoint.mode === 'relay') return this.startRelay(endpoint);
         const directory = await this.preparePki(endpoint);
         const socketPath = join(directory, 'management.sock');
-        let listenPort = endpoint.port;
-        if (endpoint.udpMask !== 'none') {
-            listenPort = await new Promise<number>((resolve, reject) => {
-                const reservation = dgram.createSocket('udp4');
-                reservation.once('error', reject);
-                reservation.bind(0, '127.0.0.1', () => {
-                    const port = reservation.address().port;
-                    reservation.close(() => resolve(port));
-                });
-            });
-        }
         await unlink(socketPath).catch(() => undefined);
         const configuration = [
-            `port ${listenPort}`,
-            ...(endpoint.udpMask !== 'none' ? ['local 127.0.0.1'] : []),
+            `port ${endpoint.port}`,
             `proto ${endpoint.protocol === 'tcp' ? 'tcp-server' : 'udp4'}`,
             `dev rwovp${endpoint.uuid.replaceAll('-', '').slice(0, 8)}`,
             'dev-type tun',
@@ -680,6 +668,7 @@ export class OpenVpnManager {
         await this.firewall(endpoint, true);
         const child = spawn(this.binary, ['--config', join(directory, 'server.conf')], {
             stdio: ['ignore', 'inherit', 'inherit'],
+            env: { ...process.env, RW_OPENVPN_UDP_MASK: endpoint.udpMask },
         });
         this.processes.set(endpoint.uuid, child);
         child.on('error', (error) => {
@@ -736,13 +725,6 @@ export class OpenVpnManager {
         await new Promise((resolve) => setTimeout(resolve, 300));
         if (child.exitCode !== null || this.errors.has(endpoint.uuid))
             throw new Error('OpenVPN failed to start');
-        if (endpoint.udpMask !== 'none') {
-            await this.startRelay({
-                ...endpoint,
-                targetAddress: '127.0.0.1',
-                targetPort: listenPort,
-            });
-        }
     }
 
     private async startRelay(endpoint: OpenVpnEndpoint): Promise<void> {
@@ -783,8 +765,6 @@ export class OpenVpnManager {
             });
         } else {
             const listener = dgram.createSocket('udp4');
-            let maskWindow = Date.now();
-            let maskPackets = 0;
             const peers = new Map<
                 string,
                 { socket: dgram.Socket; seen: number; ready: boolean; pending: Buffer[] }
@@ -801,37 +781,9 @@ export class OpenVpnManager {
                         peers.delete(key);
                         upstream.close();
                     });
-                    upstream.on('message', (reply) => {
-                        const opcode = reply.length ? reply[0] >> 3 : -1;
-                        if (Date.now() - maskWindow >= 1000) {
-                            maskWindow = Date.now();
-                            maskPackets = 0;
-                        }
-                        if (
-                            endpoint.udpMask === 'none' ||
-                            ![7, 8, 10].includes(opcode) ||
-                            maskPackets >= 500 ||
-                            reply.length > 65400
-                        ) {
-                            listener.send(reply, remote.port, remote.address);
-                            return;
-                        }
-                        const errorFree =
-                            endpoint.udpMask === 'error-free' ||
-                            (endpoint.udpMask === 'random' && randomInt(2) === 1);
-                        if (errorFree) listener.send(reply, remote.port, remote.address);
-                        const count = Math.min(randomInt(150, 201), 500 - maskPackets);
-                        maskPackets += count;
-                        for (let index = 0; index < count; index++) {
-                            const packet = randomBytes(reply.length + randomInt(1, 101));
-                            if (errorFree) {
-                                reply.copy(packet);
-                                packet[0] = 40;
-                            } else if (packet[0] >> 3 >= 1 && packet[0] >> 3 <= 11) packet[0] &= 7;
-                            listener.send(packet, remote.port, remote.address);
-                        }
-                        if (!errorFree) listener.send(reply, remote.port, remote.address);
-                    });
+                    upstream.on('message', (reply) =>
+                        listener.send(reply, remote.port, remote.address),
+                    );
                     const connecting = peer;
                     upstream.connect(targetPort, targetAddress, () => {
                         connecting.ready = true;
@@ -932,7 +884,6 @@ export class OpenVpnManager {
     private isRunning(endpoint: OpenVpnEndpoint): boolean {
         return endpoint.mode === 'relay'
             ? this.relays.has(endpoint.uuid)
-            : this.processes.has(endpoint.uuid) &&
-                  (endpoint.udpMask === 'none' || this.relays.has(endpoint.uuid));
+            : this.processes.has(endpoint.uuid);
     }
 }

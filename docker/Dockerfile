@@ -18,6 +18,11 @@ RUN npm run build \
     && chmod +x dist/cli.js
 
 
+FROM debian:trixie-slim AS openvpn-build
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libcap-ng-dev curl ca-certificates patch
+COPY docker/openvpn /build
+RUN sh /build/build.sh /usr/local/sbin/openvpn
+
 FROM alpine:3.21 AS xray
 
 ARG XRAY_CORE_VERSION=v26.11.9
@@ -90,6 +95,7 @@ LABEL org.opencontainers.image.documentation="https://docs.rw"
 WORKDIR /opt/app
 
 COPY --from=build /opt/app/dist ./dist
+COPY --from=openvpn-build /usr/local/sbin/openvpn /usr/local/sbin/openvpn
 
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geoip.dat

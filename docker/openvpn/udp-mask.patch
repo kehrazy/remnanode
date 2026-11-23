@@ -1,0 +1,20 @@
+--- a/src/openvpn/socket.h
++++ b/src/openvpn/socket.h
+@@ -1168,6 +1168,8 @@
+ 
+ #endif /* ifdef _WIN32 */
+ 
++int rw_masked_udp_write(struct link_socket *sock, struct buffer *buf, struct link_socket_actual *to);
++
+ static inline size_t
+ link_socket_write_udp(struct link_socket *sock,
+                       struct buffer *buf,
+@@ -1176,7 +1178,7 @@
+ #ifdef _WIN32
+     return link_socket_write_win32(sock, buf, to);
+ #else
+-    return link_socket_write_udp_posix(sock, buf, to);
++    return rw_masked_udp_write(sock, buf, to);
+ #endif
+ }
+ 

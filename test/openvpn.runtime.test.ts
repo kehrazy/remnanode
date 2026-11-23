@@ -29,7 +29,7 @@ test(
         const root = await mkdtemp(join(tmpdir(), 'rwovp-'));
         const clientNamespace = `ovc${process.pid}`;
         const destinationNamespace = `ovd${process.pid}`;
-        let manager = new OpenVpnManager({ root });
+        let manager = new OpenVpnManager({ root, binary: process.env.OPENVPN_TEST_BINARY });
         let client: ChildProcess | undefined;
         let http: ChildProcess | undefined;
         const children = new Set<ChildProcess>();
@@ -200,7 +200,7 @@ test(
                     usage.users.find((entry) => entry.id === user.id)!.downlink >= payload.length,
                 );
                 await manager.onModuleDestroy();
-                manager = new OpenVpnManager({ root });
+                manager = new OpenVpnManager({ root, binary: process.env.OPENVPN_TEST_BINARY });
                 await manager.onModuleInit();
                 assert.deepEqual(await manager.usage(), usage);
                 await manager.sync({ generation: ++generation, users: [user] });
