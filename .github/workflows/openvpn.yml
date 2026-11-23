@@ -57,8 +57,8 @@ jobs:
             AMNEZIAWG_SOURCE=amneziawg-prebuilt
           tags: remnanode-openvpn:${{ github.sha }}
           outputs: type=docker,dest=/tmp/remnanode-openvpn.tar
-          cache-from: type=gha
-          cache-to: type=gha,mode=min,timeout=2m,ignore-error=true
+          cache-from: type=gha,scope=managed-vpn-v2
+          cache-to: type=gha,scope=managed-vpn-v2,mode=min,timeout=2m,ignore-error=true
       - name: Publish image archive
         env:
           GH_TOKEN: ${{ github.token }}

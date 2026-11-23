@@ -179,7 +179,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                     await execute('ip', ['netns', 'exec', namespace, tools, 'setconf', clientInterface, config]);
                     const [ipv4, ipv6] = /^Address = (.+)$/m.exec(profile)![1].split(', ');
                     for (const [family, address] of [['-4', ipv4], ['-6', ipv6]])
-                        await execute('ip', ['netns', 'exec', namespace, 'ip', family, 'addr', 'add', address, 'dev', clientInterface]);
+                        await execute('ip', ['netns', 'exec', namespace, 'ip', family, 'addr', 'add', address, 'dev', clientInterface, ...(family === '-6' ? ['nodad'] : [])]);
                     await execute('ip', ['netns', 'exec', namespace, 'ip', 'link', 'set', clientInterface, 'mtu', '1280', 'up']);
                     await execute('ip', ['netns', 'exec', namespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', clientInterface]);
                     await execute('ip', ['netns', 'exec', namespace, 'ip', '-6', 'route', 'replace', '::/0', 'dev', clientInterface]);
@@ -190,19 +190,20 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                     assert.deepEqual(await readFile(output), payload);
                 }
                 await execute('sysctl', ['-w', 'net.ipv6.conf.all.forwarding=1']);
-                await execute('ip', ['-6', 'addr', 'add', '2001:db8:9500::1/64', 'dev', 'awd-host']);
-                await execute('ip', ['netns', 'exec', destinationNamespace, 'ip', '-6', 'addr', 'add', '2001:db8:9500::2/64', 'dev', 'awd-peer']);
+                await execute('ip', ['-6', 'addr', 'add', '2001:db8:9500::1/64', 'dev', 'awd-host', 'nodad']);
+                await execute('ip', ['netns', 'exec', destinationNamespace, 'ip', '-6', 'addr', 'add', '2001:db8:9500::2/64', 'dev', 'awd-peer', 'nodad']);
                 await execute('ip', ['netns', 'exec', destinationNamespace, 'ip', '-6', 'route', 'add', 'default', 'via', '2001:db8:9500::1']);
-                const ipv6Http = spawn('ip', ['netns', 'exec', destinationNamespace, 'python3', '-m', 'http.server', '18081', '--bind', '2001:db8:9500::2', '--directory', root], { stdio: 'ignore' });
+                const ipv6Http = spawn('ip', ['netns', 'exec', destinationNamespace, 'python3', '-m', 'http.server', '18081', '--bind', '2001:db8:9500::2', '--directory', root], { stdio: ['ignore', 'ignore', 'pipe'] });
+                ipv6Http.stderr?.on('data', (chunk: Buffer) => console.error(chunk.toString()));
                 children.add(ipv6Http);
                 await eventually(async () => {
-                    try { await execute('curl', ['-gfsSI', '--max-time', '1', 'http://[2001:db8:9500::2]:18081/payload']); return true; }
+                    try { await execute('curl', ['--noproxy', '*', '-gfsSI', '--max-time', '1', 'http://[2001:db8:9500::2]:18081/payload']); return true; }
                     catch { return false; }
                 }, 'IPv6 destination fixture did not start');
                 await connect(direct, clientNamespace);
                 await connect(second, secondNamespace);
                 await Promise.all([transfer(clientNamespace), transfer(secondNamespace)]);
-                await assert.rejects(execute('ip', ['netns', 'exec', clientNamespace, 'curl', '-gfsS', '--max-time', '2', 'http://[2001:db8:9500::2]:18081/payload']));
+                await assert.rejects(execute('ip', ['netns', 'exec', clientNamespace, 'curl', '--noproxy', '*', '-gfsS', '--max-time', '2', 'http://[2001:db8:9500::2]:18081/payload']));
                 const ipv6Rules = (await execute('ip6tables-save', ['-c'])).stdout;
                 const drop = ipv6Rules.split('\n').find((line) => line.includes('-A FORWARD -i rwawg' + endpoint.uuid.replaceAll('-', '').slice(0, 8)));
                 assert.ok(drop && Number(/^\[(\d+):/.exec(drop)![1]) > 0, 'IPv6 packets did not reach the owned drop rule');
