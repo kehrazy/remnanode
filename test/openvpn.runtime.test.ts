@@ -85,17 +85,26 @@ test(
                 'exec',
                 destinationNamespace,
                 'python3',
-                '-m',
-                'http.server',
-                '18080',
-                '--bind',
-                '198.18.0.2',
-                '--directory',
+                '-c',
+                'import http.server, socketserver, os, sys; os.chdir(sys.argv[1]); socketserver.TCPServer(("198.18.0.2", 18080), http.server.SimpleHTTPRequestHandler).serve_forever()',
                 root,
             ],
             { stdio: 'ignore' },
         );
         children.add(http);
+        await eventually(async () => {
+            try {
+                await execute('curl', [
+                    '-fsSI',
+                    '--max-time',
+                    '1',
+                    'http://198.18.0.2:18080/payload',
+                ]);
+                return true;
+            } catch {
+                return false;
+            }
+        }, 'HTTP transfer fixture did not become ready');
         await manager.onModuleInit();
         for (const [index, protocol, controlChannel, udpMask] of [
             [0, 'udp', 'tls-crypt-v2', 'none'],
