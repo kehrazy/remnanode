@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import dgram from 'node:dgram';
 import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { createConnection, createServer, type Socket } from 'node:net';
+import { createConnection, createServer, isIP, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -38,6 +38,7 @@ export class OpenVpnManager {
     private readonly binary: string;
     private readonly manageFirewall: boolean;
     private readonly enabled: boolean;
+    private readonly listenAddress: string;
     private state: OpenVpnState = {
         epoch: randomUUID(),
         generation: 0,
@@ -61,11 +62,14 @@ export class OpenVpnManager {
         binary?: string;
         manageFirewall?: boolean;
         enabled?: boolean;
+        listenAddress?: string;
     }) {
         this.root = options.root;
         this.binary = options.binary ?? '/usr/local/sbin/openvpn';
         this.manageFirewall = options.manageFirewall ?? true;
         this.enabled = options.enabled ?? true;
+        this.listenAddress = options.listenAddress ?? '0.0.0.0';
+        if (isIP(this.listenAddress) !== 4) throw new Error('OpenVPN listen address must be IPv4');
     }
 
     async onModuleInit(): Promise<void> {
@@ -627,6 +631,7 @@ export class OpenVpnManager {
         await unlink(socketPath).catch(() => undefined);
         const configuration = [
             `port ${endpoint.port}`,
+            `local ${this.listenAddress}`,
             `proto ${endpoint.protocol === 'tcp' ? 'tcp-server' : 'udp4'}`,
             `dev rwovp${endpoint.uuid.replaceAll('-', '').slice(0, 8)}`,
             'dev-type tun',
@@ -755,7 +760,7 @@ export class OpenVpnManager {
             });
             await new Promise<void>((resolve, reject) => {
                 server.once('error', reject);
-                server.listen(endpoint.port, '0.0.0.0', () => {
+                server.listen(endpoint.port, this.listenAddress, () => {
                     server.removeListener('error', reject);
                     resolve();
                 });
@@ -800,7 +805,7 @@ export class OpenVpnManager {
             });
             await new Promise<void>((resolve, reject) => {
                 listener.once('error', reject);
-                listener.bind(endpoint.port, '0.0.0.0', () => {
+                listener.bind(endpoint.port, this.listenAddress, () => {
                     listener.removeListener('error', reject);
                     resolve();
                 });

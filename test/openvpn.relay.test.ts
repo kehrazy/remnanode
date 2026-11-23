@@ -16,7 +16,11 @@ for (const protocol of ['udp', 'tcp'] as const) {
         { timeout: 10_000 },
         async (t) => {
             const root = await mkdtemp(join(tmpdir(), 'remnanode-openvpn-'));
-            let manager = new OpenVpnManager({ root, manageFirewall: false });
+            let manager = new OpenVpnManager({
+                root,
+                manageFirewall: false,
+                listenAddress: '127.0.0.1',
+            });
             const clients: { destroy(): void }[] = [];
             t.after(async () => {
                 for (const client of clients) client.destroy();
@@ -91,7 +95,11 @@ for (const protocol of ['udp', 'tcp'] as const) {
                 }
                 if (attempt === 0) {
                     await manager.onModuleDestroy();
-                    manager = new OpenVpnManager({ root, manageFirewall: false });
+                    manager = new OpenVpnManager({
+                        root,
+                        manageFirewall: false,
+                        listenAddress: '127.0.0.1',
+                    });
                     await manager.onModuleInit();
                     assert.equal(manager.status().endpoints[0].running, true);
                 }
@@ -116,7 +124,11 @@ test('corrupt persistent state fails closed without replacing identity or keys',
     const root = await mkdtemp(join(tmpdir(), 'remnanode-openvpn-'));
     try {
         await writeFile(join(root, 'state.json'), '{}');
-        const manager = new OpenVpnManager({ root, manageFirewall: false });
+        const manager = new OpenVpnManager({
+            root,
+            manageFirewall: false,
+            listenAddress: '127.0.0.1',
+        });
         await manager.onModuleInit();
         assert.match(manager.status().error!, /restore its persistent volume/);
         await assert.rejects(manager.sync({ generation: 1, users: [] }), /unreadable/);

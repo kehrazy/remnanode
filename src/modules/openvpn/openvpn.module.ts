@@ -12,6 +12,7 @@ import { OpenVpnManager } from './openvpn.manager';
                 new OpenVpnManager({
                     root: process.env.OPENVPN_STATE_PATH ?? '/var/lib/remnanode/openvpn',
                     binary: process.env.OPENVPN_BINARY ?? '/usr/local/sbin/openvpn',
+                    listenAddress: process.env.OPENVPN_BIND_ADDRESS,
                     manageFirewall: process.env.OPENVPN_MANAGE_FIREWALL !== 'false',
                     enabled: process.env.OPENVPN_ENABLED === 'true',
                 }),
