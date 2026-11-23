@@ -126,6 +126,22 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                     await assert.rejects(execute('ip', ['netns', 'exec', clientNamespace, 'curl', '-fsS', '--max-time', '2', 'http://198.19.0.2:18081/payload']));
                     await manager.sync({ generation: generation++, users: [user] });
                     assert.equal(await manager.download(endpoint.uuid, user.id), direct);
+                    // Removing a peer destroys its session; an unchanged saved profile reconnects with a fresh handshake.
+                    client.kill('SIGTERM');
+                    await new Promise<void>((resolve) => client!.once('exit', () => resolve()));
+                    children.delete(client);
+                    client = spawn('ip', ['netns', 'exec', clientNamespace, binary, '-f', clientInterface], {
+                        env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1' }, stdio: 'ignore',
+                    });
+                    children.add(client);
+                    await eventually(async () => {
+                        try { await execute('ip', ['netns', 'exec', clientNamespace, tools, 'show', clientInterface]); return true; }
+                        catch { return false; }
+                    }, 'Native client did not restart');
+                    await execute('ip', ['netns', 'exec', clientNamespace, tools, 'setconf', clientInterface, config]);
+                    await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'addr', 'add', address, 'dev', clientInterface]);
+                    await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'link', 'set', clientInterface, 'mtu', '1280', 'up']);
+                    await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', clientInterface]);
                     await execute('ip', ['netns', 'exec', clientNamespace, 'curl', '-fsS', '--max-time', '15', '--output', join(root, 'download'), 'http://198.19.0.2:18081/payload']);
                 }
                 client.kill('SIGTERM');
