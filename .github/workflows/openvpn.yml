@@ -1,4 +1,4 @@
-name: OpenVPN fork
+name: Managed VPN node
 on:
   push:
     branches: [openvpn]
@@ -21,10 +21,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: sudo apt-get update && sudo apt-get install -y openvpn iptables iproute2 build-essential pkg-config libssl-dev libcap-ng-dev patch
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.4'
       - run: sh docker/openvpn/build.sh /tmp/remnawave-openvpn
+      - run: sh docker/amneziawg/build.sh /tmp/remnawave-amneziawg
       - run: npm run typecheck
-      - run: npx tsx --test test/openvpn.management.test.ts test/openvpn.relay.test.ts
+      - run: npx tsx --test test/openvpn.management.test.ts test/openvpn.relay.test.ts test/amneziawg.test.ts
       - run: sudo env PATH="$PATH" OPENVPN_RUNTIME_TEST=true OPENVPN_TEST_BINARY=/tmp/remnawave-openvpn node_modules/.bin/tsx --test test/openvpn.runtime.test.ts
+      - run: sudo env PATH="$PATH" AMNEZIAWG_RUNTIME_TEST=true AMNEZIAWG_TEST_BINARY=/tmp/remnawave-amneziawg/amneziawg-go AMNEZIAWG_TEST_TOOLS=/tmp/remnawave-amneziawg/awg node_modules/.bin/tsx --test test/amneziawg.runtime.test.ts
   image:
     needs: test
     runs-on: ubuntu-latest
@@ -49,5 +54,5 @@ jobs:
           gzip -1 /tmp/remnanode-openvpn.tar
           cd /tmp
           sha256sum remnanode-openvpn.tar.gz > remnanode-openvpn.tar.gz.sha256
-          gh release create "openvpn-${GITHUB_SHA}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "OpenVPN ${GITHUB_SHA:0:12}" --notes "Tested OpenVPN node image. Xray remains at 26.7.28."
+          gh release create "openvpn-${GITHUB_SHA}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "OpenVPN ${GITHUB_SHA:0:12}" --notes "Tested OpenVPN and AmneziaWG node image. Xray remains at 26.7.28."
           gh release upload "openvpn-${GITHUB_SHA}" remnanode-openvpn.tar.gz remnanode-openvpn.tar.gz.sha256 --repo "$GITHUB_REPOSITORY"

@@ -1,12 +1,15 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import dgram from 'node:dgram';
-import { access, chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { createConnection, createServer, isIP, type Socket } from 'node:net';
+import { access, chmod, mkdir, readFile, unlink } from 'node:fs/promises';
+import { createConnection, isIP, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { Logger } from '@nestjs/common';
+
+import { startVpnRelay } from '@common/vpn/relay';
+import { writePrivateFile } from '@common/vpn/private-file';
+import { setVpnFirewall } from '@common/vpn/firewall';
 
 import { OpenVpnManagement } from './openvpn.management';
 import {
@@ -20,17 +23,7 @@ import {
 } from './openvpn.types';
 
 const execute = promisify(execFile);
-const PRIVATE_NETWORKS = [
-    '0.0.0.0/8',
-    '10.0.0.0/8',
-    '100.64.0.0/10',
-    '127.0.0.0/8',
-    '169.254.0.0/16',
-    '172.16.0.0/12',
-    '192.168.0.0/16',
-    '224.0.0.0/4',
-    '240.0.0.0/4',
-];
+
 
 export class OpenVpnManager {
     private readonly logger = new Logger(OpenVpnManager.name);
@@ -137,16 +130,10 @@ export class OpenVpnManager {
         return result;
     }
 
-    private async write(path: string, contents: string): Promise<void> {
-        const temporary = `${path}.${randomUUID()}.tmp`;
-        await writeFile(temporary, contents, { mode: 0o600 });
-        await rename(temporary, path);
-    }
-
     private async save(): Promise<void> {
         this.dirty = false;
         try {
-            await this.write(join(this.root, 'state.json'), JSON.stringify(this.state));
+            await writePrivateFile(join(this.root, 'state.json'), JSON.stringify(this.state));
         } catch (error) {
             this.dirty = true;
             throw error;
@@ -276,7 +263,7 @@ export class OpenVpnManager {
             `/CN=${commonName}`,
         ]);
         await chmod(path('key'), 0o600);
-        await this.write(
+        await writePrivateFile(
             path('ext'),
             [
                 'basicConstraints=critical,CA:FALSE',
@@ -370,7 +357,7 @@ export class OpenVpnManager {
         }
         await this.certificate(directory, 'server', `server-${endpoint.uuid}`, true);
         if (endpoint.controlChannel === 'none') {
-            await this.write(join(directory, 'pki.ready'), '1\n');
+            await writePrivateFile(join(directory, 'pki.ready'), '1\n');
             return directory;
         }
         try {
@@ -383,7 +370,7 @@ export class OpenVpnManager {
             ]);
             await chmod(join(directory, 'control.key'), 0o600);
         }
-        await this.write(join(directory, 'pki.ready'), '1\n');
+        await writePrivateFile(join(directory, 'pki.ready'), '1\n');
         return directory;
     }
 
@@ -457,175 +444,23 @@ export class OpenVpnManager {
 
     private async firewall(endpoint: OpenVpnEndpoint, enable: boolean): Promise<void> {
         if (!this.manageFirewall || endpoint.mode !== 'server') return;
-        const chain = `RWOVP${endpoint.uuid.replaceAll('-', '').slice(0, 10)}`;
-        const run = async (args: string[], optional = false) => {
-            try {
-                await execute('iptables', ['-w', ...args]);
-            } catch (error) {
-                if (!optional) throw error;
-            }
-        };
-        const remove = async () => {
-            await run(
-                [
-                    '-D',
-                    'FORWARD',
-                    '-s',
-                    endpoint.network,
-                    '-m',
-                    'comment',
-                    '--comment',
-                    chain,
-                    '-j',
-                    chain,
-                ],
-                true,
-            );
-            await run(
-                [
-                    '-D',
-                    'FORWARD',
-                    '-d',
-                    endpoint.network,
-                    '-m',
-                    'conntrack',
-                    '--ctstate',
-                    'ESTABLISHED,RELATED',
-                    '-m',
-                    'comment',
-                    '--comment',
-                    chain,
-                    '-j',
-                    'ACCEPT',
-                ],
-                true,
-            );
-            await run(
-                [
-                    '-D',
-                    'INPUT',
-                    '-s',
-                    endpoint.network,
-                    '-m',
-                    'comment',
-                    '--comment',
-                    chain,
-                    '-j',
-                    'DROP',
-                ],
-                true,
-            );
-            await run(
-                [
-                    '-t',
-                    'nat',
-                    '-D',
-                    'POSTROUTING',
-                    '-s',
-                    endpoint.network,
-                    '-m',
-                    'comment',
-                    '--comment',
-                    chain,
-                    '-j',
-                    chain,
-                ],
-                true,
-            );
-            await run(['-F', chain], true);
-            await run(['-X', chain], true);
-            await run(['-t', 'nat', '-F', chain], true);
-            await run(['-t', 'nat', '-X', chain], true);
-        };
-        await remove();
-        if (!enable) return;
-        if ((await readFile('/proc/sys/net/ipv4/ip_forward', 'utf8')).trim() !== '1') {
-            throw new Error(
-                'Enable net.ipv4.ip_forward=1 on the Docker host before starting OpenVPN',
-            );
-        }
-        try {
-            await run(['-N', chain]);
-            for (const network of PRIVATE_NETWORKS)
-                await run(['-A', chain, '-d', network, '-j', 'DROP']);
-            await run(['-A', chain, '-j', 'ACCEPT']);
-            await run([
-                '-I',
-                'FORWARD',
-                '1',
-                '-s',
-                endpoint.network,
-                '-m',
-                'comment',
-                '--comment',
-                chain,
-                '-j',
-                chain,
-            ]);
-            await run([
-                '-I',
-                'FORWARD',
-                '1',
-                '-d',
-                endpoint.network,
-                '-m',
-                'conntrack',
-                '--ctstate',
-                'ESTABLISHED,RELATED',
-                '-m',
-                'comment',
-                '--comment',
-                chain,
-                '-j',
-                'ACCEPT',
-            ]);
-            await run([
-                '-I',
-                'INPUT',
-                '1',
-                '-s',
-                endpoint.network,
-                '-m',
-                'comment',
-                '--comment',
-                chain,
-                '-j',
-                'DROP',
-            ]);
-            await run(['-t', 'nat', '-N', chain]);
-            await run([
-                '-t',
-                'nat',
-                '-A',
-                chain,
-                '-j',
-                ...(endpoint.egressAddress
-                    ? ['SNAT', '--to-source', endpoint.egressAddress]
-                    : ['MASQUERADE']),
-            ]);
-            await run([
-                '-t',
-                'nat',
-                '-A',
-                'POSTROUTING',
-                '-s',
-                endpoint.network,
-                '-m',
-                'comment',
-                '--comment',
-                chain,
-                '-j',
-                chain,
-            ]);
-        } catch (error) {
-            await remove();
-            throw error;
-        }
+        await setVpnFirewall({
+            chain: `RWOVP${endpoint.uuid.replaceAll('-', '').slice(0, 10)}`,
+            network: endpoint.network,
+            egressAddress: endpoint.egressAddress,
+        }, enable);
     }
 
     private async start(endpoint: OpenVpnEndpoint): Promise<void> {
         this.errors.delete(endpoint.uuid);
-        if (endpoint.mode === 'relay') return this.startRelay(endpoint);
+        if (endpoint.mode === 'relay') {
+            this.relays.set(endpoint.uuid, await startVpnRelay({
+                ...endpoint,
+                listenAddress: this.listenAddress,
+                onError: (error) => this.errors.set(endpoint.uuid, this.errorMessage(error)),
+            }));
+            return;
+        }
         const directory = await this.preparePki(endpoint);
         const socketPath = join(directory, 'management.sock');
         await unlink(socketPath).catch(() => undefined);
@@ -671,7 +506,7 @@ export class OpenVpnManager {
                 : []),
             '',
         ].join('\n');
-        await this.write(join(directory, 'server.conf'), configuration);
+        await writePrivateFile(join(directory, 'server.conf'), configuration);
         await this.firewall(endpoint, true);
         const child = spawn(this.binary, ['--config', join(directory, 'server.conf')], {
             stdio: ['ignore', 'inherit', 'inherit'],
@@ -732,102 +567,6 @@ export class OpenVpnManager {
         await new Promise((resolve) => setTimeout(resolve, 300));
         if (child.exitCode !== null || this.errors.has(endpoint.uuid))
             throw new Error('OpenVPN failed to start');
-    }
-
-    private async startRelay(endpoint: OpenVpnEndpoint): Promise<void> {
-        if (!endpoint.targetAddress || !endpoint.targetPort)
-            throw new Error('Relay target is required');
-        const targetAddress = endpoint.targetAddress;
-        const targetPort = endpoint.targetPort;
-        if (endpoint.protocol === 'tcp') {
-            const clients = new Set<Socket>();
-            const server = createServer((client) => {
-                if (clients.size >= 512) {
-                    client.destroy();
-                    return;
-                }
-                const upstream = createConnection(targetPort, targetAddress);
-                clients.add(client);
-                client.setTimeout(120_000, () => client.destroy());
-                client.on('error', () => upstream.destroy());
-                upstream.on('error', () => client.destroy());
-                client.on('close', () => {
-                    clients.delete(client);
-                    upstream.destroy();
-                });
-                upstream.on('close', () => client.destroy());
-                client.pipe(upstream).pipe(client);
-            });
-            await new Promise<void>((resolve, reject) => {
-                server.once('error', reject);
-                server.listen(endpoint.port, this.listenAddress, () => {
-                    server.removeListener('error', reject);
-                    resolve();
-                });
-            });
-            server.on('error', (error) => this.errors.set(endpoint.uuid, this.errorMessage(error)));
-            this.relays.set(endpoint.uuid, () => {
-                for (const client of clients) client.destroy();
-                server.close();
-            });
-        } else {
-            const listener = dgram.createSocket('udp4');
-            const peers = new Map<
-                string,
-                { socket: dgram.Socket; seen: number; ready: boolean; pending: Buffer[] }
-            >();
-            listener.on('message', (message, remote) => {
-                const key = `${remote.address}:${remote.port}`;
-                let peer = peers.get(key);
-                if (!peer) {
-                    if (peers.size >= 256) return;
-                    const upstream = dgram.createSocket('udp4');
-                    peer = { socket: upstream, seen: Date.now(), ready: false, pending: [] };
-                    peers.set(key, peer);
-                    upstream.on('error', () => {
-                        peers.delete(key);
-                        upstream.close();
-                    });
-                    upstream.on('message', (reply) =>
-                        listener.send(reply, remote.port, remote.address),
-                    );
-                    const connecting = peer;
-                    upstream.connect(targetPort, targetAddress, () => {
-                        connecting.ready = true;
-                        for (const packet of connecting.pending) upstream.send(packet);
-                        connecting.pending.length = 0;
-                    });
-                }
-                if (peer.ready) peer.socket.send(message);
-                else if (peer.pending.length < 4 && message.length <= 8192)
-                    peer.pending.push(message);
-                peer.seen = Date.now();
-            });
-            await new Promise<void>((resolve, reject) => {
-                listener.once('error', reject);
-                listener.bind(endpoint.port, this.listenAddress, () => {
-                    listener.removeListener('error', reject);
-                    resolve();
-                });
-            });
-            listener.on('error', (error) =>
-                this.errors.set(endpoint.uuid, this.errorMessage(error)),
-            );
-            const cleanup = setInterval(() => {
-                for (const [key, peer] of peers) {
-                    if (Date.now() - peer.seen > 120_000) {
-                        peers.delete(key);
-                        peer.socket.close();
-                    }
-                }
-            }, 30_000);
-            cleanup.unref();
-            this.relays.set(endpoint.uuid, () => {
-                clearInterval(cleanup);
-                for (const peer of peers.values()) peer.socket.close();
-                listener.close();
-            });
-        }
     }
 
     private async stop(endpoint: OpenVpnEndpoint): Promise<void> {

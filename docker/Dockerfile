@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 COPY docker/openvpn /build
 RUN sh /build/build.sh /usr/local/sbin/openvpn
 
+FROM golang:1.27.4-trixie AS amneziawg-build
+COPY docker/amneziawg/build.sh /build-amneziawg.sh
+RUN sh /build-amneziawg.sh /usr/local/bin
+
 FROM alpine:3.21 AS xray
 
 ARG XRAY_CORE_VERSION=v26.11.9
@@ -96,6 +100,8 @@ WORKDIR /opt/app
 
 COPY --from=build /opt/app/dist ./dist
 COPY --from=openvpn-build /usr/local/sbin/openvpn /usr/local/sbin/openvpn
+COPY --from=amneziawg-build /usr/local/bin/amneziawg-go /usr/local/bin/amneziawg-go
+COPY --from=amneziawg-build /usr/local/bin/awg /usr/local/bin/awg
 
 COPY --from=xray /usr/local/bin/xray /usr/local/bin/xray
 COPY --from=xray /usr/local/share/xray/geoip.dat /usr/local/share/xray/geoip.dat
@@ -107,7 +113,7 @@ COPY docker/rootfs/ /
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates wget xz-utils openvpn openssl iptables \
+        ca-certificates wget xz-utils openvpn openssl iptables iproute2 \
     && S6_ARCH="$(uname -m)" \
     && wget -qO /tmp/s6-noarch.tar.xz "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" \
     && wget -qO /tmp/s6-arch.tar.xz "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" \
