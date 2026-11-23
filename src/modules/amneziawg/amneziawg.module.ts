@@ -14,6 +14,7 @@ import { AmneziaWgManager } from './amneziawg.manager';
                     binary: process.env.AMNEZIAWG_BINARY ?? '/usr/local/bin/amneziawg-go',
                     manageFirewall: process.env.AMNEZIAWG_MANAGE_FIREWALL !== 'false',
                     enabled: process.env.AMNEZIAWG_ENABLED === 'true',
+                    listenAddress: process.env.AMNEZIAWG_BIND_ADDRESS,
                 }),
         },
     ],

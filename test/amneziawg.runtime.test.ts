@@ -30,7 +30,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
     const clientInterface = 'awg-client';
     const binary = process.env.AMNEZIAWG_TEST_BINARY!;
     const tools = process.env.AMNEZIAWG_TEST_TOOLS!;
-    let manager = new AmneziaWgManager({ root: join(root, 'state'), binary });
+    let manager = new AmneziaWgManager({ root: join(root, 'state'), binary, listenAddress: '172.31.253.3' });
     const children = new Set<ChildProcess>();
     let client: ChildProcess | undefined;
     t.after(async () => {
@@ -57,6 +57,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
         await execute('ip', ['netns', 'exec', namespace, 'ip', 'link', 'set', 'lo', 'up']);
         await execute('ip', ['netns', 'exec', namespace, 'ip', 'route', 'add', 'default', 'via', `${address}.1`]);
     }
+    await execute('ip', ['addr', 'add', '172.31.253.3/24', 'dev', 'awc-host']);
     const payload = Buffer.alloc(1_048_576, 0x61);
     await writeFile(join(root, 'payload'), payload);
     const http = spawn('ip', ['netns', 'exec', destinationNamespace, 'python3', '-c',
@@ -72,7 +73,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
     for (const version of ['3.1', '2.0']) {
         for (const preset of ['default', 'mobile']) {
             const endpoint = AmneziaWgEndpointSchema.parse({
-                uuid: randomUUID(), name: 'Native integration', address: '172.31.253.1', port: 15443,
+                uuid: randomUUID(), name: 'Native integration', address: '172.31.253.3', port: 15443,
                 generation: version, preset, network: '10.95.0.0/24', dnsServers: ['1.1.1.1'],
             });
             await manager.configure(endpoint);
@@ -241,7 +242,7 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
             const usage = await manager.usage();
             assert.ok(usage.users.find((entry) => entry.id === user.id)!.downlink >= before + payload.length * 2);
             await manager.onModuleDestroy();
-            manager = new AmneziaWgManager({ root: join(root, 'state'), binary });
+            manager = new AmneziaWgManager({ root: join(root, 'state'), binary, listenAddress: '172.31.253.3' });
             await manager.onModuleInit();
             assert.equal(await manager.download(endpoint.uuid, user.id), direct);
             assert.equal((await manager.usage()).epoch, usage.epoch);

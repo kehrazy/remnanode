@@ -6,6 +6,12 @@ Enable `AMNEZIAWG_ENABLED=true` and mount persistent storage at
 `NET_ADMIN`, `/dev/net/tun`, host networking and host IPv4 forwarding. Allow the
 UDP ports configured in the panel. Do not reuse an OpenVPN UDP listener's port.
 
+On a node with multiple IPv4 addresses, set `AMNEZIAWG_BIND_ADDRESS` to the local
+address advertised to clients. This binds both server and relay sockets so UDP
+responses use that source address. An absent value keeps wildcard binding. The
+bundled core includes `docker/amneziawg/bind-address.patch` for this option;
+`AMNEZIAWG_BINARY` replacements must also support `WG_BIND_ADDRESS`.
+
 The bundled userspace core and tools are pinned by commit and SHA-256 in
 `docker/amneziawg/build.sh`. No kernel module or DKMS installation is required.
 OpenVPN and Xray continue to run independently. Existing images can be rolled

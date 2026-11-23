@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createPrivateKey, createPublicKey, randomUUID, randomBytes } from 'node:crypto';
 import { access, chmod, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isIPv4 } from 'node:net';
 import { promisify } from 'node:util';
 import { Logger } from '@nestjs/common';
 
@@ -42,16 +43,22 @@ export class AmneziaWgManager {
     private readonly binary: string;
     private readonly enabled: boolean;
     private readonly manageFirewall: boolean;
+    private readonly listenAddress: string | undefined;
 
-    constructor(options: { root: string; binary?: string; enabled?: boolean; manageFirewall?: boolean }) {
+    constructor(options: { root: string; binary?: string; enabled?: boolean; manageFirewall?: boolean; listenAddress?: string }) {
         this.root = options.root;
         this.binary = options.binary ?? '/usr/local/bin/amneziawg-go';
         this.enabled = options.enabled ?? true;
         this.manageFirewall = options.manageFirewall ?? true;
+        this.listenAddress = options.listenAddress || undefined;
     }
 
     async onModuleInit(): Promise<void> {
         if (!this.enabled) return;
+        if (this.listenAddress && !isIPv4(this.listenAddress)) {
+            this.initializationError = 'AmneziaWG bind address must be IPv4';
+            return;
+        }
         await mkdir(this.root, { recursive: true, mode: 0o700 });
         await chmod(this.root, 0o700);
         try {
@@ -318,7 +325,7 @@ export class AmneziaWgManager {
         this.errors.delete(endpoint.uuid);
         if (endpoint.mode === 'relay') {
             this.relays.set(endpoint.uuid, await startVpnRelay({
-                ...endpoint, protocol: 'udp', listenAddress: '0.0.0.0',
+                ...endpoint, protocol: 'udp', listenAddress: this.listenAddress ?? '0.0.0.0',
                 onError: (error) => this.errors.set(endpoint.uuid, error.message),
             }));
             return;
@@ -328,7 +335,7 @@ export class AmneziaWgManager {
         for (const peer of Object.values(server.peers)) peer.rx = peer.tx = 0;
         const name = this.interfaceName(endpoint.uuid);
         const child = spawn(this.binary, ['-f', name], {
-            env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1' },
+            env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1', WG_BIND_ADDRESS: this.listenAddress ?? '' },
             stdio: ['ignore', 'ignore', 'pipe'],
         });
         this.processes.set(endpoint.uuid, child);

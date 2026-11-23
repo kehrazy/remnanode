@@ -1,0 +1,29 @@
+--- a/conn/bind_std.go
++++ b/conn/bind_std.go
+@@ -11,6 +11,7 @@
+ 	"fmt"
+ 	"net"
+ 	"net/netip"
++	"os"
+ 	"runtime"
+ 	"strconv"
+ 	"sync"
+@@ -120,7 +121,17 @@
+ }
+ 
+ func listenNet(network string, port int) (*net.UDPConn, int, error) {
+-	conn, err := listenConfig().ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
++	address := ""
++	if network == "udp4" {
++		address = os.Getenv("WG_BIND_ADDRESS")
++		if address != "" {
++			ip, err := netip.ParseAddr(address)
++			if err != nil || !ip.Is4() {
++				return nil, 0, errors.New("WG_BIND_ADDRESS must be an IPv4 address")
++			}
++		}
++	}
++	conn, err := listenConfig().ListenPacket(context.Background(), network, net.JoinHostPort(address, strconv.Itoa(port)))
+ 	if err != nil {
+ 		return nil, 0, err
+ 	}

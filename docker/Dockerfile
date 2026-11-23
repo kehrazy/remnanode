@@ -26,8 +26,8 @@ COPY docker/openvpn /build
 RUN sh /build/build.sh /usr/local/sbin/openvpn
 
 FROM golang:1.27.4-trixie AS amneziawg-build
-COPY docker/amneziawg/build.sh /build-amneziawg.sh
-RUN sh /build-amneziawg.sh /usr/local/bin
+COPY docker/amneziawg /build-amneziawg
+RUN sh /build-amneziawg/build.sh /usr/local/bin
 
 FROM scratch AS amneziawg-prebuilt
 COPY --chmod=755 .build/amneziawg/ /usr/local/bin/
