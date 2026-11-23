@@ -96,8 +96,9 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                 const config = join(root, 'client.conf');
                 await writeFile(config, native, { mode: 0o600 });
                 client = spawn('ip', ['netns', 'exec', clientNamespace, binary, '-f', clientInterface], {
-                    env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1' }, stdio: 'ignore',
+                    env: { ...process.env, LOG_LEVEL: 'error', GOMAXPROCS: '1' }, stdio: ['ignore', 'ignore', 'pipe'],
                 });
+                client.stderr?.on('data', (chunk: Buffer) => console.error(chunk.toString()));
                 children.add(client);
                 await eventually(async () => {
                     try { await execute('ip', ['netns', 'exec', clientNamespace, tools, 'show', clientInterface]); return true; }
@@ -107,7 +108,15 @@ test('native AmneziaWG peers transfer real data through server and relay, persis
                 await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'addr', 'add', address, 'dev', clientInterface]);
                 await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'link', 'set', clientInterface, 'mtu', '1280', 'up']);
                 await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'route', 'replace', '198.19.0.2/32', 'dev', clientInterface]);
-                await execute('ip', ['netns', 'exec', clientNamespace, 'curl', '-fsS', '--max-time', '15', '--output', join(root, 'download'), 'http://198.19.0.2:18081/payload']);
+                try {
+                    await execute('ip', ['netns', 'exec', clientNamespace, 'curl', '-fsS', '--max-time', '15', '--output', join(root, 'download'), 'http://198.19.0.2:18081/payload']);
+                } catch (error) {
+                    console.error('Failed route', version, preset, viaRelay);
+                    console.error((await execute('ip', ['netns', 'exec', clientNamespace, tools, 'show', clientInterface, 'latest-handshakes'])).stdout);
+                    console.error((await execute('ip', ['netns', 'exec', clientNamespace, tools, 'show', clientInterface, 'transfer'])).stdout);
+                    console.error(manager.status());
+                    throw error;
+                }
                 assert.deepEqual(await readFile(join(root, 'download')), payload);
                 const route = (await execute('ip', ['netns', 'exec', clientNamespace, 'ip', 'route', 'get', '198.19.0.2'])).stdout;
                 assert.match(route, /dev awg-client/);
